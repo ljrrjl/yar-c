@@ -394,14 +394,11 @@ static void yar_server_reset(yar_request_context *ctx) /* {{{ */ {
 	yar_response_free(ctx->response);
 	memset(ctx->request, 0, sizeof(yar_request));
 	memset(ctx->response, 0, sizeof(yar_response));
-	printf("[info] yar_server_reset del ctx->ev_write\n");
 	event_del(ctx->ev_write);
 	event_add(ctx->ev_read, &ctx->timeout);
-	printf("[info] yar_server_reset free ctx->ev_write\n");
 	if(ctx->ev_write != NULL)
 		event_free(ctx->ev_write);
 	ctx->ev_write = NULL;
-	printf("[info] done\n");
 }
 /* }}} */
 
@@ -413,10 +410,8 @@ static void yar_server_close_connection(int fd, yar_request_context *ctx) /* {{{
 		event_del(ctx->ev_write);
 	yar_request_free(ctx->request);
 	yar_response_free(ctx->response);
-	printf("[info] yar_server_close_connection free ev_read\n");
 	if(ctx->ev_read != NULL)
 		event_free(ctx->ev_read);
-	printf("[info] yar_server_close_connection free ev_read\n");
 	if(ctx->ev_write != NULL)
 		event_free(ctx->ev_write);
 	ctx->ev_read = NULL;
@@ -447,10 +442,8 @@ static void yar_server_on_write(int fd, short ev, void *arg) /* {{{ */ {
 
 	yar_server_log(ctx);
 	if (ctx->header->reserved & YAR_PROTOCOL_PERSISTENT) {
-		printf("[info] run yar_server_reset\n");
 		yar_server_reset(ctx);
 	} else {
-		printf("[info] run yar_server_close_connection\n");
 		yar_server_close_connection(fd, ctx);
 	}
 }
@@ -606,7 +599,6 @@ static void* thread_work(void* argv)
 	    /* we can not run more than one server anyway */
 	    event_base_loop(base, EVLOOP_NONBLOCK); 
     }
-    printf("[info] thread exit\n");
     event_base_free(base);
     return (void*)0;
 }
@@ -630,6 +622,7 @@ static int yar_server_startup_workers(pthread_t* tids) /* {{{ */ {
 	//		yar_server_child_init();
 	//		return 1;
 	//	}
+		return 0;
 	}
 }
 /* }}} */
@@ -824,18 +817,26 @@ int yar_server_run() /* {{{ */ {
 
 	server->running = 1;
 	pthread_t* tids = (pthread_t*)malloc(sizeof(pthread_t) * server->max_children);
-	yar_server_startup_workers(tids);
+	if(yar_server_startup_workers(tids) == 1)
+	{
+		struct event_base* base = event_base_new();
 
-	pthread_join(tids[0]);
+		struct event* event_listen = event_new(base, server->fd, EV_READ|EV_PERSIST, yar_server_on_accept, base);
+		event_add(event_listen, NULL);
+		while (server->running) {
+			/* we can not run more than one server anyway */
+			event_base_loop(base, EVLOOP_NONBLOCK); 
+		}
+		event_base_free(base);
+	}
+	else
+	{
+		pthread_join(tids[0]);
+	}
 	sleep(1);
-//	while (server->running) {
-//		printf("[info] server is runing\n");
-//		sleep(1);
-//	}
-
 	alog(YAR_DEBUG, "Server is going down");
 	yar_server_destroy();
-	return 1;
+	return 0;
 }
 /* }}} */
 
