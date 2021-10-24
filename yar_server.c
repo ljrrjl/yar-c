@@ -50,8 +50,8 @@
 
 typedef struct _yar_request_context {
 	size_t bytes_sent;
-	struct event ev_read;
-	struct event ev_write;
+	struct event* ev_read;
+	struct event* ev_write;
 	struct _yar_server *server;
 	struct _yar_response *response;
 	struct _yar_request *request;
@@ -60,6 +60,7 @@ typedef struct _yar_request_context {
 	ulong start_time;
 	char *remote_addr;
 	long remote_port;
+	struct event_base* base;
 } yar_request_context;
 
 struct _yar_server {
@@ -83,6 +84,7 @@ struct _yar_server {
 	yar_init parent_init;
 	yar_init child_init;
 } *server;
+
 
 ulong inline yar_get_microsec() /* {{{ */ {
 	struct timeval tv;
@@ -131,37 +133,37 @@ static inline void yar_server_log_error(yar_request_context *ctx, const char *fm
 /* }}} */
 
 static int yar_server_start_daemon(void) /* {{{ */ {
-	pid_t pid;
-	int i, fd;
-
-	pid = fork();
-	switch (pid) {
-		case -1:
-			return 0;
-		case 0:
-			setsid();
-			break;
-		default:
-			exit(0);
-			break;
-	}
-
-	umask(0);
-	if (chdir("/") < 0) {
-		/* nothing */
-	}
-
-	for (i=0; i < 3; i++) {
-		close(i);
-	}
-
-	fd = open("/dev/null", O_RDWR);
-	if (dup2(fd, 0) < 0 || dup2(fd, 1) < 0 || dup2(fd, 2) < 0) {
-		close(fd);
-		return 0;
-	}
-
-	close(fd);
+//	pid_t pid;
+//	int i, fd;
+//
+//	pid = fork();
+//	switch (pid) {
+//		case -1:
+//			return 0;
+//		case 0:
+//			setsid();
+//			break;
+//		default:
+//			exit(0);
+//			break;
+//	}
+//
+//	umask(0);
+//	if (chdir("/") < 0) {
+//		/* nothing */
+//	}
+//
+//	for (i=0; i < 3; i++) {
+//		close(i);
+//	}
+//
+//	fd = open("/dev/null", O_RDWR);
+//	if (dup2(fd, 0) < 0 || dup2(fd, 1) < 0 || dup2(fd, 2) < 0) {
+//		close(fd);
+//		return 0;
+//	}
+//
+//	close(fd);
 	return 1;
 }
 /* }}} */
@@ -364,28 +366,6 @@ static void yar_server_child_init() /* {{{ */ {
 }
 /* }}} */
 
-static int yar_server_startup_workers() /* {{{ */ {
-	int max_childs;
-	pid_t pid = 0;
-
-	max_childs = server->max_children;
-	if (server->stand_alone || !max_childs) {
-		yar_server_parent_init();
-		return 1;
-	} else {
-		while (max_childs-- && (pid = fork())) {
-			server->running_children++;
-		}
-		if (pid) {
-			yar_server_parent_init();
-			return 0;
-		} else {
-			yar_server_child_init();
-			return 1;
-		}
-	}
-}
-/* }}} */
 
 static inline yar_server_handler * yar_server_find_handler(char *name, int len) /* {{{ */ {
 	int i = 0;
@@ -414,17 +394,33 @@ static void yar_server_reset(yar_request_context *ctx) /* {{{ */ {
 	yar_response_free(ctx->response);
 	memset(ctx->request, 0, sizeof(yar_request));
 	memset(ctx->response, 0, sizeof(yar_response));
-	event_del(&ctx->ev_write);
-	event_add(&ctx->ev_read, &ctx->timeout);
+	printf("[info] yar_server_reset del ctx->ev_write\n");
+	event_del(ctx->ev_write);
+	event_add(ctx->ev_read, &ctx->timeout);
+	printf("[info] yar_server_reset free ctx->ev_write\n");
+	if(ctx->ev_write != NULL)
+		event_free(ctx->ev_write);
+	ctx->ev_write = NULL;
+	printf("[info] done\n");
 }
 /* }}} */
 
 static void yar_server_close_connection(int fd, yar_request_context *ctx) /* {{{ */ {
 	close(fd);
-	event_del(&ctx->ev_read);
-	event_del(&ctx->ev_write);
+	if(ctx->ev_read != NULL)
+		event_del(ctx->ev_read);
+	if(ctx->ev_write != NULL)
+		event_del(ctx->ev_write);
 	yar_request_free(ctx->request);
 	yar_response_free(ctx->response);
+	printf("[info] yar_server_close_connection free ev_read\n");
+	if(ctx->ev_read != NULL)
+		event_free(ctx->ev_read);
+	printf("[info] yar_server_close_connection free ev_read\n");
+	if(ctx->ev_write != NULL)
+		event_free(ctx->ev_write);
+	ctx->ev_read = NULL;
+	ctx->ev_write = NULL;
 	free(ctx);
 }
 /* }}} */
@@ -451,8 +447,10 @@ static void yar_server_on_write(int fd, short ev, void *arg) /* {{{ */ {
 
 	yar_server_log(ctx);
 	if (ctx->header->reserved & YAR_PROTOCOL_PERSISTENT) {
+		printf("[info] run yar_server_reset\n");
 		yar_server_reset(ctx);
 	} else {
+		printf("[info] run yar_server_close_connection\n");
 		yar_server_close_connection(fd, ctx);
 	}
 }
@@ -543,9 +541,11 @@ static void yar_server_on_read(int fd, short ev, void *arg) /* {{{ */ {
 			yar_protocol_render(&header, request->id, YAR_SERVER_NAME, NULL, response->payload.size - sizeof(yar_header), 0);
 			memcpy(response->payload.data, (char *)&header, sizeof(yar_header));
 			memcpy(response->payload.data + sizeof(yar_header), YAR_PACKAGER, sizeof(YAR_PACKAGER));
-			event_set(&ctx->ev_write, fd, EV_WRITE|EV_PERSIST, yar_server_on_write, ctx);
-			event_add(&ctx->ev_write, &ctx->timeout);
-			event_del(&ctx->ev_read);
+
+			struct event* write_event = event_new(ctx->base, fd, EV_WRITE|EV_PERSIST, yar_server_on_write, ctx);
+			ctx->ev_write = write_event;
+			event_add(ctx->ev_write, &ctx->timeout);
+			event_del(ctx->ev_read);
 			return;
 		}
 	}
@@ -553,6 +553,7 @@ static void yar_server_on_read(int fd, short ev, void *arg) /* {{{ */ {
 /* }}} */
 
 static void yar_server_on_accept(int fd, short ev, void *arg) /* {{{ */ {
+	struct event_base* ev_base = (struct event_base*)arg;
 	int client_fd;
 	struct sockaddr_in client_addr;
 	socklen_t client_len = sizeof(struct sockaddr_in);
@@ -578,14 +579,58 @@ static void yar_server_on_accept(int fd, short ev, void *arg) /* {{{ */ {
 		ctx->remote_port = ntohs(((struct sockaddr_in *)&client_addr)->sin_port);
 	}
 
+	ctx->base = ev_base;
+	ctx->ev_write = NULL;
+	ctx->ev_read = NULL;
 	ctx->request = (yar_request *)((char *)ctx + sizeof(yar_request_context));
 	ctx->response = (yar_response *)((char *)ctx->request + sizeof(yar_request));
 	ctx->timeout.tv_sec = server->timeout;
 	ctx->timeout.tv_usec = 0;
-	event_set(&ctx->ev_read, client_fd, EV_READ|EV_PERSIST, yar_server_on_read, ctx);
-	event_add(&ctx->ev_read, &ctx->timeout);
+
+	struct event* read_event = event_new(ctx->base, client_fd, EV_READ|EV_PERSIST, yar_server_on_read, ctx);
+	ctx->ev_read = read_event;
+	event_add(ctx->ev_read, &ctx->timeout);
 
 	return;
+}
+/* }}} */
+
+static void* thread_work(void* argv)
+{
+    int fd = server->fd;
+    struct event_base* base = event_base_new();
+
+    struct event* event_listen = event_new(base, fd, EV_READ|EV_PERSIST, yar_server_on_accept, base);
+    event_add(event_listen, NULL);
+    while (server->running) {
+	    /* we can not run more than one server anyway */
+	    event_base_loop(base, EVLOOP_NONBLOCK); 
+    }
+    printf("[info] thread exit\n");
+    event_base_free(base);
+    return (void*)0;
+}
+
+static int yar_server_startup_workers(pthread_t* tids) /* {{{ */ {
+	int max_childs;
+
+	max_childs = server->max_children;
+	if (server->stand_alone || !max_childs) {
+		yar_server_parent_init();
+		return 1;
+	} else {
+		while (max_childs-- && !(pthread_create(&tids[server->running_children], NULL, thread_work, NULL))) {
+			server->running_children++;
+		}
+		yar_server_parent_init();
+	//	if (pid) {
+	//		yar_server_parent_init();
+	//		return 0;
+	//	} else {
+	//		yar_server_child_init();
+	//		return 1;
+	//	}
+	}
 }
 /* }}} */
 
@@ -737,9 +782,6 @@ void yar_server_shutdown(int signo) /* {{{ */ {
 	(void)signo;
 
 	server->running = 0;
-	if (server->ppid != getpid() || server->stand_alone || !server->max_children) {
-		event_loopexit(NULL);
-	}
 }
 /* }}} */
 
@@ -764,7 +806,7 @@ int yar_server_run() /* {{{ */ {
 
 	yar_logger_setopt(YAR_LOGGER_HOSTNAME, server->hostname);
 
-    if (server->pid_file && !yar_check_previous_run(server->pid_file)) {
+	if (server->pid_file && !yar_check_previous_run(server->pid_file)) {
 		return 0;
 	}
 
@@ -781,48 +823,18 @@ int yar_server_run() /* {{{ */ {
 	}
 
 	server->running = 1;
-	if (!yar_server_startup_workers()) {
-		/* master */
-		pid_t cid;
-		int stat;
+	pthread_t* tids = (pthread_t*)malloc(sizeof(pthread_t) * server->max_children);
+	yar_server_startup_workers(tids);
 
-		while (server->running) {
-			if ((cid = waitpid(-1, &stat, 0)) > 0) {
-				alog(YAR_DEBUG, "Child %d exit with status %d", cid, stat);
-				if (!(cid = fork())) {
-					alog(YAR_DEBUG, "Startup new worker, now running worker is %d, max worker is %d", server->running_children, server->max_children);
-					yar_server_child_init();
-					goto worker;
-				}
-			} 
-		}
+	pthread_join(tids[0]);
+	sleep(1);
+//	while (server->running) {
+//		printf("[info] server is runing\n");
+//		sleep(1);
+//	}
 
-		alog(YAR_DEBUG, "Server is going down");
-		signal(SIGQUIT, SIG_IGN);
-		kill(-(server->ppid), SIGQUIT);
-
-		while (server->running_children) {
-			while ((cid = waitpid(-1, &stat, 0)) > 0) {
-				server->running_children--;
-				alog(YAR_DEBUG, "Child %d shutdown with status %d", cid, stat);
-			}
-		}
-
-		yar_server_destroy();
-	} else {
-		/* slavers */
-		struct event ev_accept;
-worker:
-		event_init();
-		while (server->running) {
-			/* we can not run more than one server anyway */
-			event_set(&ev_accept, server->fd, EV_READ|EV_PERSIST, yar_server_on_accept, NULL);
-			event_add(&ev_accept, NULL);
-			event_dispatch();
-		}
-		/* server has been shutdown */
-		yar_server_destroy();
-	}
+	alog(YAR_DEBUG, "Server is going down");
+	yar_server_destroy();
 	return 1;
 }
 /* }}} */
