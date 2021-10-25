@@ -599,6 +599,7 @@ static void* thread_work(void* argv)
 	    /* we can not run more than one server anyway */
 	    event_base_loop(base, EVLOOP_NONBLOCK); 
     }
+    event_free(event_listen);
     event_base_free(base);
     return (void*)0;
 }
@@ -827,6 +828,7 @@ int yar_server_run() /* {{{ */ {
 			/* we can not run more than one server anyway */
 			event_base_loop(base, EVLOOP_NONBLOCK); 
 		}
+		event_free(event_listen);
 		event_base_free(base);
 	}
 	else
@@ -835,6 +837,7 @@ int yar_server_run() /* {{{ */ {
 	}
 	sleep(1);
 	alog(YAR_DEBUG, "Server is going down");
+	free(tids);
 	yar_server_destroy();
 	return 0;
 }
