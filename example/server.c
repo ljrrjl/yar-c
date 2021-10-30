@@ -29,11 +29,30 @@ void yar_handler_example(yar_request *request, yar_response *response, void *coo
 		yar_unpack_iterator* it_map = yar_unpack_iterator_init(map_data);
 		do
 		{
-			yar_data* kv_data = yar_unpack_iterator_current(it_map);
+			struct msgpack_object_kv* kv_data = (struct msgpack_object_kv*)yar_unpack_iterator_current(it_map);
+			uint32_t strlength = kv_data->key.via.str.size;
+			char* buffer = (char*)malloc(strlength + 1);
+			memset(buffer, 0, strlength + 1);
+			memcpy(buffer, kv_data->key.via.str.ptr, strlength);
+			
+			uint32_t val_strlength = kv_data->val.via.str.size;
+			char* val_buffer = (char*)malloc(val_strlength + 1);
+			memset(val_buffer, 0, strlength + 1);
+			memcpy(val_buffer, kv_data->val.via.str.ptr, val_strlength);
+
+			printf("[info] key: %s ==> value: %s\n", buffer, val_buffer);
+			free(buffer);
+			free(val_buffer);
+			yar_unpack_iterator_next(it_map); //kv
 		}while(yar_unpack_iterator_next(it_map));
 		yar_unpack_iterator_free(it_map);
 	}while(yar_unpack_iterator_next(it_array));
 	yar_unpack_iterator_free(it_array);
+
+	packager = yar_pack_start_map(1);
+	yar_pack_push_string(packager, "status", 6);
+	yar_pack_push_string(packager, "ok", 2);
+
 	yar_response_set_retval(response, packager);
 	yar_pack_free(packager);
 }
