@@ -22,39 +22,18 @@ void yar_handler_example(yar_request *request, yar_response *response, void *coo
 	const yar_data *parameters = yar_request_get_parameters(request);
 	assert(((long)cookie) == 1);
 
-	packager = yar_pack_start_map(3);
-	/* first element */
+	yar_unpack_iterator* it_array = yar_unpack_iterator_init(parameters);
+	do
 	{
-		/* key */
-		yar_pack_push_string(packager, "status", 6);
-		/* value */
-		yar_pack_push_long(packager, 0);
-	}
-
-	/* second element */
-	{
-		/* key */
-		yar_pack_push_string(packager, "parameters", 10);
-		/* value */
-		yar_pack_push_data(packager, parameters);
-	}
-
-	/* third element */ 
-	{
-		/* key */
-		yar_pack_push_string(packager, "data", 4);
-		/* value */
-		yar_pack_push_array(packager, 3);
-		/* array start */
+		yar_data* map_data = yar_unpack_iterator_current(it_array);
+		yar_unpack_iterator* it_map = yar_unpack_iterator_init(map_data);
+		do
 		{
-			/* first element */
-			yar_pack_push_bool(packager, 1);
-			/* second element */
-			yar_pack_push_double(packager, 0.2342);
-			/* third element */
-			yar_pack_push_string(packager, "dummy", 5);
-		}
-	}
+			yar_data* kv_data = yar_unpack_iterator_current(it_map);
+		}while(yar_unpack_iterator_next(it_map));
+		yar_unpack_iterator_free(it_map);
+	}while(yar_unpack_iterator_next(it_array));
+	yar_unpack_iterator_free(it_array);
 	yar_response_set_retval(response, packager);
 	yar_pack_free(packager);
 }

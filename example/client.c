@@ -75,7 +75,14 @@ int main(int argc, char **argv) {
 		int i = 0;
 		yar_client_set_opt(client, YAR_PERSISTENT_LINK, &persistent);
 		while (i++ < number_calls) {
-			yar_response *response = client->call(client, "default", 0, NULL);
+			yar_packager* package = yar_pack_start_map(2);
+			yar_pack_push_string(package, "title", 5);
+			yar_pack_push_string(package, "Test", 4);
+			yar_pack_push_string(package, "context", 7);
+			yar_pack_push_string(package, "Hello World", 11);
+
+			yar_response *response = client->call(client, "default", 1, &package);
+			yar_pack_free(package);
 			if (response) {
 				output_response(response);
 				yar_response_free(response);
