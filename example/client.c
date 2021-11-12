@@ -91,6 +91,25 @@ int main(int argc, char **argv) {
 				printf( "No response\n" );
 				return 1;
 			}
+
+			package = yar_pack_start_map(2);
+			yar_pack_push_string(package, "name", 4);
+			yar_pack_push_string(package, "Liu jiarui",strlen("Liu jiarui"));
+			yar_pack_push_string(package, "age", 3);
+			yar_pack_push_long(package, 22);	
+				
+			response = client->call(client, "register", 1, &package);
+			yar_pack_free(package);
+
+			if (response) {
+				output_response(response);
+				yar_response_free(response);
+				free(response);
+			} else {
+				printf( "No response\n" );
+				return 1;
+			}
+			
 		}
 		yar_client_destroy(client);
 	}

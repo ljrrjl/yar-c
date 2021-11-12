@@ -17,6 +17,80 @@
 #include "yar.h"
 #include "msgpack.h" 
 
+struct id_message
+{
+	char* name;
+	int age;
+};
+
+struct response
+{
+	int error_code;
+};
+
+int id_message_handler(struct response* rsp, struct id_message* msg)
+{
+	printf("[info] name => %s, age => %d\n", msg->name, msg->age);
+	rsp->error_code = 100;
+	return 0;
+}
+
+void id_message_handler_(yar_request *request, yar_response *response, void *cookie)
+{
+	yar_packager* packager = NULL;
+
+	struct id_message msg;	
+	msg.name = NULL;
+	msg.age = 0;
+
+	const yar_data* parameters = yar_request_get_parameters(request);
+	assert(((long)cookie) == 1);
+
+	yar_unpack_iterator* it_array = yar_unpack_iterator_init(parameters);
+	do
+	{
+		const yar_data* map_data = yar_unpack_iterator_current(it_array);
+		yar_unpack_iterator* it_map = yar_unpack_iterator_init(map_data);
+		do
+		{
+			struct msgpack_object_kv* kv_data = (struct msgpack_object_kv*)yar_unpack_iterator_current(it_map);
+			uint32_t strlength = kv_data->key.via.str.size;
+			char* buffer = (char*)malloc(strlength + 1);
+			memset(buffer, 0, strlength + 1);
+			memcpy(buffer, kv_data->key.via.str.ptr, strlength);
+			if(strcmp(buffer, "name") == 0)
+			{
+				uint32_t val_strlength = kv_data->val.via.str.size;
+				msg.name = (char*)malloc(val_strlength + 1);
+				memset(msg.name, 0, val_strlength + 1);
+				memcpy(msg.name, kv_data->val.via.str.ptr, val_strlength);
+			}
+			else if(strcmp(buffer, "age") == 0)
+			{
+				msg.age = kv_data->val.via.i64;
+			}
+			else
+			{
+				printf("[error] unpack fail\n");
+			}
+			free(buffer);
+			yar_unpack_iterator_next(it_map); //kv
+		}while(yar_unpack_iterator_next(it_map));
+		yar_unpack_iterator_free(it_map);
+	}while(yar_unpack_iterator_next(it_array));
+	yar_unpack_iterator_free(it_array);
+	struct response rsp;
+	memset(&rsp, 0, sizeof(struct response));
+	id_message_handler(&rsp, &msg);
+	
+	packager = yar_pack_start_map(1);
+	yar_pack_push_string(packager, "error_code", strlen("error_code"));
+	yar_pack_push_long(packager, rsp.error_code);
+
+	yar_response_set_retval(response, packager);
+	yar_pack_free(packager);
+}
+
 void yar_handler_example(yar_request *request, yar_response *response, void *cookie) {
 	yar_packager *packager;
 	const yar_data *parameters = yar_request_get_parameters(request);
@@ -25,7 +99,7 @@ void yar_handler_example(yar_request *request, yar_response *response, void *coo
 	yar_unpack_iterator* it_array = yar_unpack_iterator_init(parameters);
 	do
 	{
-		yar_data* map_data = yar_unpack_iterator_current(it_array);
+		const yar_data* map_data = yar_unpack_iterator_current(it_array);
 		yar_unpack_iterator* it_map = yar_unpack_iterator_init(map_data);
 		do
 		{
@@ -59,6 +133,7 @@ void yar_handler_example(yar_request *request, yar_response *response, void *coo
 
 yar_server_handler example_handlers[] = {
 	{"default", sizeof("default") - 1, yar_handler_example},
+	{"register", sizeof("register") - 1, id_message_handler_},
 	{NULL, 0, NULL}
 };
 
